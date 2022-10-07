@@ -1,7 +1,9 @@
 ---
 title: "emR.qmd"
 author: "Mario"
-format: html
+format:
+  html:
+    self-contained: true
 ---
 
 ```{r}
