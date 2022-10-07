@@ -109,7 +109,7 @@ Codificando em fatores as variáveis apropriadas.
 
 ```{r}
 df_treef <- df_tree %>%
-  mutate(age_F = cut(df_treef$age, breaks = seq(25,70, by = 2)),
+  mutate(age_F = cut(df_tree$age, breaks = seq(25,70, by = 2)),
          race_id_F = factor(race_id,levels = c(0,1,3,4,5,50), 
                             labels = c("NonIdentif", "Caucasian","AfricanAmer","Asian","NatHawaiian","Multiple")),
          ERpos_F = factor(ERpos, levels = c(0,1), labels = c("Positive","Negative")),
@@ -255,7 +255,7 @@ xgb_spec <- boost_tree(
   sample_size = tune(), mtry = tune(),
   learn_rate = tune(),
 ) %>%
-  set_engine("xgboost") %>%
+  set_engine("xgboost", tree_method = 'gpu_hist') %>%
   set_mode("classification")
 xgb_spec
 ```
@@ -270,7 +270,7 @@ xgb_grid <- grid_latin_hypercube(
   sample_size = sample_prop(),
   finalize(mtry(), df_train),
   learn_rate(),
-  size = 30
+  size = 10
 )
 xgb_grid
 ```
@@ -286,13 +286,16 @@ xgb_wf
 
 ```{r}
 set.seed(123)
-df_folds <- vfold_cv(df_train, strat = IsDead_F)
+df_folds <- vfold_cv(df_train, strat = IsDead_F, v = 5)
 df_folds
 ```
 
 
 ```{r}
-doParallel::registerDoParallel()
+#| warning: false
+#| message: false
+
+#doParallel::registerDoParallel() # usando GPU agora na workstation
 
 set.seed(123)
 xgb_res <- tune_grid(
@@ -354,8 +357,26 @@ library(vip)
 ```{r}
 final_xgb %>%
   fit(data = df_train) %>%
-  pull_workflow_fit() %>%
+  extract_fit_parsnip() %>%
   vip(geom = "point")
+```
+
+
+## Tentativa de melhorar a explicabilidade do modelo
+
+.todo
+
+```{r}
+#| eval: false
+final_xgb_model <- final_xgb %>%
+  fit(data = df_train)
+```
+
+
+```{r}
+#| eval: false
+test_predictions <- predict(final_xgb_model, new_data = df_test, type = "prob")
+test_predictions
 ```
 
 
