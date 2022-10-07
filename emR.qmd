@@ -1,0 +1,362 @@
+---
+title: "emR.qmd"
+author: "Mario"
+format: html
+---
+
+```{r}
+library(tidyverse)
+library(rpart)
+library(rpart.plot)
+library(readxl)
+library(skimr)
+```
+
+## Leitura dos Dados
+
+```{r}
+df1 <- read_excel("data/base_de_dados.xlsx", sheet = "TCIA Patient Clinical Subset")
+df2 <- read_excel("data/base_de_dados.xlsx", sheet = "TCIA Outcomes Subset")
+```
+## Dicionário de Dados
+
+```
+Patient Demographics		
+Age	Patient Age	Number
+race_id	Patient Race	Number
+	1=Caucasian	
+	3=African American	
+	4=Asian	
+	5=Native Hawaiian/Pacific Islander	
+	6=American Indian/Alaskan Native	
+	50=Multiple race	
+
+On-Study Data  (Pre-Treatment)		
+ERpos	Estrogen Receptor Status (Allred Score or Community determined), pre-treatment	Number
+	0=Negative	
+	1=Positive	
+	2=Indeterminate	
+PgRpos	Progesterone Receptor Status (Allred Score or Community determined), pre-treatment	Number
+	0=Negative	
+	1=Positive	
+	2=Indeterminate	
+HR Pos	Hormone Receptor Status, pre-treatment	Number
+	0=Negative for both ER and PR	
+	1=Positive if either ER or PR was Positive	
+	2=Indeterminate if both ER and PR were Indeterminate	
+"Her2MostPos
+(replaced Her2CommPos, 4/6/2016)"	Her2 Status, pre-treatment, adding in Central Her2 IHC results for missing Community Status	Number
+	0=Negative	
+	1=Positive	
+	Blank= indeterminate or not done	
+HR_HER2_CATEGORY	3-level HR/Her2 category pre-treatment	Number
+	1=HR Positive, Her2 Negative	
+	2=Her2 Positive	
+	3=Triple Negative	
+HR_HER2_STATUS	3-level HR/Her2 status pre-treatment	Text
+	HRposHER2neg = HR Positive, Her2 Negative	
+	HER2pos = Her2 Positive	
+	TripleNeg =Triple Negative	
+BilateralCa	Does the patient have bilateral breast cancer prior to neoadjuvant therapy?	Number
+	0=No	
+	1=Yes	
+Laterality	Index Tumor Laterality	Number
+	1=Left	
+	2=Right	
+```
+
+## Preparação dos Dados
+
+
+```{r}
+df1_df2 <- left_join(df1,select(df2, SUBJECTID, sstat), by = "SUBJECTID") %>%
+  filter(sstat != 9)
+df_clean <- df1_df2[complete.cases(df1_df2),]
+```
+
+```{r}
+head(df_clean)
+```
+
+```{r}
+vars_to_keep <- c(0,2,3,4,5,6,7,10,11,16) + 1
+df <- select(df_clean, all_of(vars_to_keep))
+head(df)
+```
+
+De acordo com o Dicionário de Dados, a variável `sstat` tem os seguintes valores:
+
+* 7=Alive
+* 8= Dead
+* 9=Lost
+
+Já filtramos os valores 9, pois indicam que os dados se perderam. Então temos apenas "7 = Alive" e "8 = Dead"; vou criar uma outra variável categórica `IsDead` com os seguintes valores:
+
+* 0 = Alive
+* 1 = Dead
+
+```{r}
+df_tree <- df %>% 
+  mutate(IsDead = if_else(sstat == 7, 0, 1),
+         IsDead_F = factor(IsDead, levels = c(0,1), labels = c("Alive", "Dead")),
+    Resultado_F = factor(sstat, levels = c(7,8), labels = c("Alive","Dead"))) %>%
+  select(-SUBJECTID) #%>%
+  #mutate_if(is.double, as.integer)
+head(df_tree)
+```
+
+Codificando em fatores as variáveis apropriadas.
+
+```{r}
+df_treef <- df_tree %>%
+  mutate(age_F = cut(df_treef$age, breaks = seq(25,70, by = 2)),
+         race_id_F = factor(race_id,levels = c(0,1,3,4,5,50), 
+                            labels = c("NonIdentif", "Caucasian","AfricanAmer","Asian","NatHawaiian","Multiple")),
+         ERpos_F = factor(ERpos, levels = c(0,1), labels = c("Positive","Negative")),
+         PgRpos_F = factor(PgRpos, levels = c(0,1), labels = c("Positive","Negative")),
+         HR_Pos_F = factor(`HR Pos`, levels = c(0,1), labels = c("Positive","Negative")),
+         Her2MostPos_F = factor(Her2MostPos, levels = c(0,1), labels = c("Negative","Positive")),
+         BilateralCa_F = factor(BilateralCa, levels = c(0,1), labels = c("No","Yes")),
+         Laterality = if_else(Laterality == 1, 0, 1),
+         Laterality_F = factor(Laterality, levels = c(0,1), labels = c("Left","Right")),
+         ) %>%
+  select(age,dplyr::ends_with("_F")) %>% 
+  select(age, age_F:Laterality_F, Resultado_F, IsDead_F) # na ordem correta
+```
+
+```{r}
+skim(df_tree)
+```
+
+
+```{r}
+skim(df_treef)
+```
+
+
+## Árvore de Decisão
+
+
+
+```{r}
+tree <- rpart(IsDead_F ~ age + race_id + ERpos + PgRpos + `HR Pos` + Her2MostPos
+              + BilateralCa + Laterality , data = df_tree, method = 'class')
+rpart.plot(tree, extra = 101)
+```
+
+```{r}
+print(tree)
+```
+
+
+```{r}
+printcp(tree)
+```
+
+
+## Regressão Logística
+
+Vou tentar uma regressão logística com variáveis categóricas pra ver o que dá.
+
+Vou categorizar a `idade` também, dividindo em categorias, intervalos de 5 anos, de 25 a 70.
+
+```{r}
+df_treef <- df_treef %>% 
+  mutate(age_F = cut(df_treef$age, breaks = seq(25,70, by = 2))) #,
+                     #labels = c("27.5", "32.5", "37.5","42.5","47.5","52.5",
+                    #            "57.5","62.5","67.5")))
+```
+
+
+```{r}
+reglog <- glm(IsDead_F ~  age_F + race_id_F + ERpos_F + PgRpos_F + HR_Pos_F + Her2MostPos_F + BilateralCa_F + Laterality_F 
+              , data = df_treef, 
+              family = binomial(link="logit"))
+summary(reglog)
+```
+
+Olhando no sumário do modelo, vemos que apenas uma variável tem significância estatística, `ERpos`, assim nosso modelo fica:
+
+```{r}
+reglog2 <- glm(IsDead_F ~  ERpos_F
+              , data = df_treef, 
+              family = binomial(link="logit"))
+summary(reglog2)
+```
+
+
+
+<!-- $$IsDead_F = H(\hat\beta_0 + \hat\beta_1  X_1 + \hat\beta_2  X_2 + ... + \hat\beta_n  X_n)$$ -->
+
+$$\mathrm{IsDead\_F} = H(-0.8408 -1.3257*\mathrm{ERpos\_FNegative})$$
+
+As probabilidades são:
+```{r}
+exp(reglog2$coefficients)
+```
+
+```{r}
+preds <- predict(reglog2, type = "response")
+mean(preds[df_treef$ERpos_F == "Positive"])
+mean(preds[df_treef$ERpos_F == "Negative"])
+```
+Não deu muito bom os resultados da Regressão Logística; parece que confirmou que a variável relevante é apenas `ERPos`.
+
+## KMeans
+
+
+```{r}
+kmmod <- kmeans(select(df_tree, -IsDead_F, -Resultado_F), 2, nstart = 100, iter.max = 100)
+summary(kmmod)
+```
+
+
+```{r}
+kmmod$centers
+```
+
+
+```{r}
+kmmod$cluster
+```
+
+```{r}
+df_treekm <- mutate(df_tree, clusters = kmmod$cluster)
+```
+
+
+```{r}
+select(df_treekm, ERpos, clusters) %>% table()
+```
+
+## XGBoost
+
+Vou tentar fazer uma classificação usando o XGBoost.
+
+```{r}
+library(xgboost)
+library(tidymodels)
+```
+
+
+```{r}
+set.seed(123)
+df_split <- initial_split(select(df_tree, -IsDead,-Resultado_F, -sstat), strata = IsDead_F)
+df_train <- training(df_split)
+df_test <- testing(df_split)
+```
+
+
+```{r}
+xgb_spec <- boost_tree(
+  trees = 1000,
+  tree_depth = tune(), min_n = tune(),
+  loss_reduction = tune(),
+  sample_size = tune(), mtry = tune(),
+  learn_rate = tune(),
+) %>%
+  set_engine("xgboost") %>%
+  set_mode("classification")
+xgb_spec
+```
+
+
+
+```{r}
+xgb_grid <- grid_latin_hypercube(
+  tree_depth(),
+  min_n(),
+  loss_reduction(),
+  sample_size = sample_prop(),
+  finalize(mtry(), df_train),
+  learn_rate(),
+  size = 30
+)
+xgb_grid
+```
+
+
+```{r}
+xgb_wf <- workflow() %>%
+  add_formula(IsDead_F ~ .) %>%
+  add_model(xgb_spec)
+xgb_wf
+```
+
+
+```{r}
+set.seed(123)
+df_folds <- vfold_cv(df_train, strat = IsDead_F)
+df_folds
+```
+
+
+```{r}
+doParallel::registerDoParallel()
+
+set.seed(123)
+xgb_res <- tune_grid(
+  xgb_wf, resamples = df_folds,
+  grid = xgb_grid,
+  control = control_grid(save_pred = TRUE)
+)
+
+xgb_res
+
+```
+
+
+```{r}
+collect_metrics(xgb_res)
+```
+
+
+
+```{r}
+xgb_res %>%
+  collect_metrics() %>%
+  filter(.metric == "roc_auc") %>%
+  select(mean, mtry:sample_size) %>%
+  pivot_longer(mtry:sample_size,
+               values_to = "value",
+               names_to = "parameter"
+  ) %>%
+  ggplot(aes(value, mean, color = parameter)) +
+  geom_point(alpha = 0.8, show.legend = FALSE) +
+  facet_wrap(~parameter, scales = "free_x") +
+  labs(x = NULL, y = "AUC")
+```
+
+```{r}
+show_best(xgb_res, "roc_auc")
+```
+
+
+
+```{r}
+best_auc <- select_best(xgb_res, "roc_auc")
+best_auc
+```
+
+
+```{r}
+final_xgb <- finalize_workflow(
+  xgb_wf,
+  best_auc
+)
+final_xgb
+```
+
+```{r}
+library(vip)
+```
+
+```{r}
+final_xgb %>%
+  fit(data = df_train) %>%
+  pull_workflow_fit() %>%
+  vip(geom = "point")
+```
+
+
+
